@@ -1,0 +1,231 @@
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: ~/CT_TC_JointRL_Origin/data/image_diff/train.parquet
+  val_files: ~/CT_TC_JointRL_Origin/data/image_diff/test.parquet
+  train_max_samples: -1
+  val_max_samples: -1
+  prompt_key: prompt
+  reward_fn_key: data_source
+  max_prompt_length: 4096
+  max_response_length: 3072
+  train_batch_size: 32
+  val_batch_size: null
+  # tool_config_path: ${oc.select:actor_rollout_ref.rollout.multi_turn.tool_config_path, null}
+  # return_raw_input_ids: False
+  # return_raw_chat: True
+  # return_full_prompt: False
+  shuffle: True
+  seed: 7788
+  dataloader_num_workers: 0
+  # image_patch_size: 14
+  validation_shuffle: False
+  filter_overlong_prompts: True
+  filter_overlong_prompts_workers: 1
+  truncation: error
+  # image_key: images
+  # video_key: videos
+  # trust_remote_code: False
+  return_multi_modal_inputs: True
+  custom_cls:
+    path: ~/plot_to_code_refine_origin/training/rl/dataset/image_diff_dataset.py
+    name: ImageDiffDataset
+  apply_chat_template_kwargs: {
+    # enable_thinking: False
+  }
+
+reward_model:
+  enable: False
+reward_manager:
+  name: naive
+custom_reward_function:
+  path: ~/plot_to_code_refine_origin/training/rl/reward/image_diff_reward.py
+  name: compute_score
+
+actor_rollout_ref:
+  hybrid_engine: True
+  model:
+    path: ~/output_qwen3_vl_2b_1226_full_6000/checkpoint-64
+    override_config: {}
+    enable_gradient_checkpointing: True
+    enable_activation_offload: False
+    use_remove_padding: True
+    trust_remote_code: False
+    custom_chat_template: null
+    external_lib: null
+    # lora_rank: 0
+    # lora_alpha: 16
+    # target_modules: all-linear
+    # exclude_modules: null
+    # lora_adapter_path: null
+
+  actor:
+    strategy: fsdp2
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: False
+    ppo_max_token_len_per_gpu: 16384
+    freeze_vision_tower: True
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    # clip_ratio_low: 0.2
+    # clip_ratio_high: 0.28
+    # clip_ratio_c: 3.0
+    entropy_coeff: 0.0
+    use_kl_loss: True
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    loss_agg_mode: token-mean
+    loss_scale_factor: null
+    # calculate_entropy: False
+    use_torch_compile: True
+    # policy_loss:
+    #   loss_mode: "vanilla"
+    #   clip_cov_ratio: 0.0002
+    #   clip_cov_lb: 1.0
+    #   clip_cov_ub: 5.0
+    #   kl_cov_ratio: 0.0002
+    #   ppo_kl_coef: 0.1
+    ppo_epochs: 1
+    data_loader_seed: 7788
+    shuffle: False
+    checkpoint:
+      save_contents: ['model', 'optimizer', 'extra']
+      load_contents: ${actor_rollout_ref.actor.checkpoint.save_contents}
+    fsdp_config:
+      wrap_policy:
+        min_num_params: 0
+      param_offload: True
+      optimizer_offload: True
+      offload_policy: True
+      fsdp_size: -1
+      ulysses_sequence_parallel_size: 1
+      dtype: bfloat16
+    optim:
+      optimizer: AdamW
+      lr: 1e-6
+      lr_warmup_steps: 50
+      # lr_warmup_steps_ratio: 0.
+      lr_scheduler_type: constant
+      # min_lr_ratio: 0.0
+      # num_cycles: 0.5
+      weight_decay: 0.01
+      clip_grad: 1.0
+
+  ref:
+    fsdp_config:
+      wrap_policy:
+        min_num_params: 0
+      param_offload: True
+      optimizer_offload: True
+      offload_policy: True
+      fsdp_size: -1
+      ulysses_sequence_parallel_size: 1
+      dtype: bfloat16
+      forward_only: True
+    log_prob_micro_batch_size_per_gpu: 32
+    log_prob_use_dynamic_bsz: ${oc.select:actor_rollout_ref.actor.use_dynamic_bsz,false}
+    log_prob_max_token_len_per_gpu: ${oc.select:actor_rollout_ref.actor.ppo_max_token_len_per_gpu,16384}
+
+  rollout:
+    name: vllm
+    temperature: 1.0
+    top_k: -1
+    top_p: 1.0
+    n: 8
+    prompt_length: ${data.max_prompt_length}
+    response_length: ${data.max_response_length}
+    dtype: bfloat16
+    gpu_memory_utilization: 0.9
+    ignore_eos: False
+    enforce_eager: False
+    cudagraph_capture_sizes: null
+    free_cache_engine: True
+    tensor_model_parallel_size: 2
+    data_parallel_size: 1
+    expert_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    enable_chunked_prefill: True
+    max_num_batched_tokens: 8192
+    max_model_len: null
+    max_num_seqs: 1024
+    load_format: dummy
+    log_prob_micro_batch_size_per_gpu: 32
+    log_prob_use_dynamic_bsz: ${oc.select:actor_rollout_ref.actor.use_dynamic_bsz,false}
+    log_prob_max_token_len_per_gpu: ${oc.select:actor_rollout_ref.actor.ppo_max_token_len_per_gpu,16384}
+    disable_log_stats: False
+    calculate_log_probs: False
+    over_sample_rate: 0
+    do_sample: True
+    engine_kwargs:
+      vllm: {mm-processor-cache-gb: 24}
+      sglang: {}
+    val_kwargs:
+      top_k: -1
+      top_p: 0.7
+      temperature: 1.0
+      n: 1
+      do_sample: True
+    agent:
+      custom_async_server:
+        path: null
+        name: null
+    multi_turn:
+      max_assistant_turns: null
+      tool_config_path: null
+      max_user_turns: null
+
+algorithm:
+  gamma: 1.0
+  lam: 1.0
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: True
+  use_kl_in_reward: False
+  kl_penalty: kl
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+    horizon: 10000
+    target_kl: 0.1
+  rollout_correction:
+    rollout_is: null
+    rollout_is_threshold: 2.0
+    rollout_rs: null
+    rollout_rs_threshold: null
+    rollout_rs_threshold_lower: null
+    rollout_token_veto_threshold: null
+    bypass_mode: false
+    use_policy_gradient: false
+    rollout_is_batch_normalize: false
+
+trainer:
+  balance_batch: True
+  total_epochs: 3
+  total_training_steps: null
+  project_name: image_diff
+  experiment_name: image_diff
+  logger: ['console']
+  log_val_generations: 2
+  rollout_data_dir: null
+  validation_data_dir: null
+  nnodes: 1
+  n_gpus_per_node: 4
+  save_freq: 100
+  val_before_train: False
+  val_only: False
+  test_freq: -1
+  critic_warmup: 0
+  resume_mode: auto
+  resume_from_path: null
+  remove_previous_ckpt_in_save: False
+  default_hdfs_dir: null
+  del_local_ckpt_after_load: False
+  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
+  max_actor_ckpt_to_keep: null
+  max_critic_ckpt_to_keep: null
+  ray_wait_register_center_timeout: 300
+  device: cuda
+  use_legacy_worker_impl: auto
+  
